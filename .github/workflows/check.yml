@@ -42,6 +42,7 @@ jobs:
           if ! git diff --cached --quiet; then
             git commit -m "Update KARABAS events"
             git fetch origin main
-            git rebase origin/main
-            git push origin HEAD:main
+            git reset --soft origin/main
+            git commit -m "Update KARABAS events" || true
+            git push origin main
           fi
