@@ -1,4 +1,3 @@
-```python
 import json
 import re
 import hashlib
@@ -12,7 +11,6 @@ from bs4 import BeautifulSoup
 
 BASE_URL = "https://wien.karabas.co"
 START_URL = "https://wien.karabas.co/uk/"
-
 EVENTS_FILE = Path("events.json")
 
 HEADERS = {
@@ -27,17 +25,14 @@ def now_utc():
     return datetime.now(timezone.utc)
 
 
-def iso_now():
-    return now_utc().isoformat()
-
-
 def load_events():
     if not EVENTS_FILE.exists():
         return []
 
     try:
         with open(EVENTS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            return data if isinstance(data, list) else []
     except Exception:
         return []
 
@@ -51,37 +46,28 @@ def clean_text(text):
     return re.sub(r"\s+", " ", text or "").strip()
 
 
-def make_id(url, title):
-    value = f"{url}|{title}"
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
-
-
-def get_page(url):
-    response = requests.get(
-        url,
+def extract_events():
+    html = requests.get(
+        START_URL,
         headers=HEADERS,
         timeout=30,
     )
-    response.raise_for_status()
-    return response.text
+    html.raise_for_status()
 
-
-def extract_events():
-    html = get_page(START_URL)
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(html.text, "html.parser")
 
     print("=== ПОСИЛАННЯ KARABAS ===")
 
-    all_links = soup.find_all("a", href=True)
+    links = soup.find_all("a", href=True)
 
-    for link in all_links:
+    for link in links:
         href = link.get("href", "").strip()
         text = clean_text(link.get_text(" ", strip=True))
 
         if href:
             print(f"LINK: {href} | TEXT: {text}")
 
-    print(f"Всього посилань: {len(all_links)}")
+    print(f"Всього посилань: {len(links)}")
     print("=== КІНЕЦЬ ПОСИЛАНЬ ===")
 
     return []
@@ -105,9 +91,7 @@ def main():
     }
 
     for event in found_events:
-
         if event["id"] not in old_ids:
-
             event["first_seen"] = current_time.isoformat()
             event["keep"] = False
             event["expires_at"] = (
@@ -121,7 +105,6 @@ def main():
     cleaned_events = []
 
     for event in all_events:
-
         if event.get("keep") is True:
             cleaned_events.append(event)
             continue
@@ -150,5 +133,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
-
