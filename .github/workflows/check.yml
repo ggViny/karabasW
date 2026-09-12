@@ -35,6 +35,5 @@ jobs:
 
           if ! git diff --cached --quiet; then
             git commit -m "Update KARABAS events"
-            git pull --rebase origin main
-            git push
+            git push origin HEAD:main
           fi
