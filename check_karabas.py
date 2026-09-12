@@ -1,5 +1,4 @@
 import json
-import re
 import hashlib
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -10,9 +9,12 @@ from bs4 import BeautifulSoup
 
 
 BASE_URL = "https://wien.karabas.co"
-START_URL = "https://wien.karabas.co/uk/"
-
 EVENTS_FILE = Path("events.json")
+
+EVENT_LIST_URLS = [
+    "https://wien.karabas.co/uk/kontserty/",
+    "https://wien.karabas.co/uk/teatry/",
+]
 
 HEADERS = {
     "User-Agent": (
@@ -26,17 +28,14 @@ def now_utc():
     return datetime.now(timezone.utc)
 
 
-def iso_now():
-    return now_utc().isoformat()
-
-
 def load_events():
     if not EVENTS_FILE.exists():
         return []
 
     try:
         with open(EVENTS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            return data if isinstance(data, list) else []
     except Exception:
         return []
 
@@ -47,12 +46,11 @@ def save_events(events):
 
 
 def clean_text(text):
-    return re.sub(r"\s+", " ", text or "").strip()
+    return " ".join((text or "").split())
 
 
-def make_id(url, title):
-    value = f"{url}|{title}"
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+def make_id(url):
+    return hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
 
 
 def get_page(url):
@@ -65,142 +63,237 @@ def get_page(url):
     return response.text
 
 
-def extract_events():
-    html = get_page(START_URL)
+def extract_image(soup):
+    image = soup.find(
+        "meta",
+        attrs={"property": "og:image"}
+    )
+
+    if image and image.get("content"):
+        return urljoin(BASE_URL, image["content"])
+
+    image = soup.find("img")
+
+    if image and image.get("src"):
+        return urljoin(BASE_URL, image["src"])
+
+    return ""
+
+
+def extract_event_details(url):
+    html = get_page(url)
     soup = BeautifulSoup(html, "html.parser")
 
+    title = ""
+
+    og_title = soup.find(
+        "meta",
+        attrs={"property": "og:title"}
+    )
+
+    if og_title and og_title.get("content"):
+        title = clean_text(og_title["content"])
+
+    if not title and soup.find("h1"):
+        title = clean_text(soup.find("h1").get_text())
+
+    page_text = clean_text(
+        soup.get_text(" ", strip=True)
+    )
+
+    image_url = extract_image(soup)
+
+    # Шукаємо дату/час у тексті сторінки.
+    event_date = ""
+    event_time = ""
+
+    # Український формат, наприклад:
+    # 12 листопада 2026, 20:00
+    import re
+
+    date_match = re.search(
+        r"(\d{1,2}\s+[а-яА-ЯіїєґІЇЄҐ]+\s+\d{4})\s*,\s*(\d{1,2}:\d{2})",
+        page_text
+    )
+
+    if date_match:
+        event_date = date_match.group(1)
+        event_time = date_match.group(2)
+
+    # Шукаємо Wien + місце проведення.
+    venue = ""
+
+    lines = [
+        clean_text(x)
+        for x in soup.stripped_strings
+    ]
+
+    for i, line in enumerate(lines):
+        if line == "Wien" and i + 1 < len(lines):
+            venue = lines[i + 1]
+            break
+
+    return {
+        "title": title,
+        "image": image_url,
+        "date": event_date,
+        "time": event_time,
+        "venue": venue,
+        "raw_text": page_text[:5000],
+    }
+
+
+def extract_events():
     events = []
-
-    # Знаходимо всі посилання на сторінки подій.
-    links = soup.find_all("a", href=True)
-
     seen_urls = set()
 
-    for link in links:
-        href = link.get("href", "").strip()
+    for list_url in EVENT_LIST_URLS:
+        print(f"Перевіряю: {list_url}")
 
-        if not href:
-            continue
+        html = get_page(list_url)
+        soup = BeautifulSoup(html, "html.parser")
 
-        url = urljoin(BASE_URL, href)
+        # На сторінці списку подій шукаємо посилання,
+        # що ведуть на wien.karabas.co/uk/...,
+        # але не на самі розділи.
+        for link in soup.find_all("a", href=True):
+            href = link.get("href", "").strip()
 
-        # Беремо тільки сторінки цього домену.
-        if not url.startswith(BASE_URL):
-            continue
+            if not href:
+                continue
 
-        # Не беремо службові сторінки.
-        if any(
-            x in url
-            for x in [
-                "/uk/",
-                "/en/",
-                "/de/",
-                "/login",
-                "/search",
-                "/help",
-            ]
-        ):
-            continue
+            url = urljoin(BASE_URL, href).split("#")[0]
 
-        # Поки що беремо URL, що виглядають як сторінки подій.
-        if url.rstrip("/") == BASE_URL:
-            continue
+            if not url.startswith(BASE_URL + "/uk/"):
+                continue
 
-        if url in seen_urls:
-            continue
+            if url.rstrip("/") in [
+                BASE_URL + "/uk",
+                BASE_URL + "/uk/kontserty",
+                BASE_URL + "/uk/teatry",
+            ]:
+                continue
 
-        title = clean_text(link.get_text(" ", strip=True))
+            if url in seen_urls:
+                continue
 
-        # Посилання без назви не цікаві.
-        if len(title) < 3:
-            continue
-
-        seen_urls.add(url)
-
-        try:
-            event_html = get_page(url)
-            event_soup = BeautifulSoup(event_html, "html.parser")
-
-            page_text = clean_text(event_soup.get_text(" ", strip=True))
-
-            # Шукаємо зображення.
-            image_url = ""
-
-            image = event_soup.find(
-                "meta",
-                attrs={"property": "og:image"}
+            title_from_link = clean_text(
+                link.get_text(" ", strip=True)
             )
 
-            if image and image.get("content"):
-                image_url = urljoin(BASE_URL, image["content"])
+            # Кнопки "КУПИТИ", міста та інше відкидаємо.
+            if title_from_link.upper() in [
+                "КУПИТИ",
+                "КУПИТЬ",
+                "BUY",
+            ]:
+                continue
 
-            if not image_url:
-                image = event_soup.find("img")
+            try:
+                details = extract_event_details(url)
 
-                if image and image.get("src"):
-                    image_url = urljoin(BASE_URL, image["src"])
+                if not details["title"]:
+                    continue
 
-            # Назву беремо з og:title, якщо є.
-            og_title = event_soup.find(
-                "meta",
-                attrs={"property": "og:title"}
-            )
+                # Подія повинна мати дату.
+                if not details["date"]:
+                    continue
 
-            event_title = title
+                seen_urls.add(url)
 
-            if og_title and og_title.get("content"):
-                event_title = clean_text(og_title["content"])
-
-            event_id = make_id(url, event_title)
-
-            events.append(
-                {
-                    "id": event_id,
-                    "title": event_title,
+                event = {
+                    "id": make_id(url),
+                    "title": details["title"],
                     "url": url,
-                    "image": image_url,
-                    "raw_text": page_text[:5000],
+                    "image": details["image"],
+                    "date": details["date"],
+                    "time": details["time"],
+                    "venue": details["venue"],
+                    "raw_text": details["raw_text"],
                 }
-            )
 
-        except Exception as e:
-            print(f"Не вдалося прочитати {url}: {e}")
+                events.append(event)
+
+                print(
+                    f"  Знайдено: {event['title']} | "
+                    f"{event['date']} {event['time']}"
+                )
+
+            except Exception as e:
+                print(f"  Помилка {url}: {e}")
 
     return events
 
 
 def main():
-    print("Перевірка KARABAS Wien...")
+    print("=== Перевірка KARABAS Wien ===")
 
     old_events = load_events()
-    old_ids = {event["id"] for event in old_events}
+    old_by_id = {
+        event.get("id"): event
+        for event in old_events
+        if event.get("id")
+    }
 
     found_events = extract_events()
 
     current_time = now_utc()
 
-    new_events = []
+    all_events = []
 
     for event in found_events:
+        event_id = event["id"]
 
-        if event["id"] not in old_ids:
+        if event_id in old_by_id:
+            old = old_by_id[event_id]
 
+            # Зберігаємо інформацію про перше виявлення.
+            event["first_seen"] = old.get(
+                "first_seen",
+                current_time.isoformat()
+            )
+
+            event["keep"] = old.get("keep", False)
+
+            event["expires_at"] = old.get(
+                "expires_at",
+                (
+                    current_time + timedelta(days=2)
+                ).isoformat()
+            )
+
+        else:
             event["first_seen"] = current_time.isoformat()
             event["keep"] = False
             event["expires_at"] = (
                 current_time + timedelta(days=2)
             ).isoformat()
 
-            new_events.append(event)
+            print(
+                f"  🆕 НОВА ПОДІЯ: {event['title']}"
+            )
 
-    # Додаємо нові події.
-    all_events = old_events + new_events
+        all_events.append(event)
 
-    # Видаляємо старі НЕзбережені події.
+    # Додаємо закріплені старі події,
+    # навіть якщо вони тимчасово не показуються
+    # у списку KARABAS.
+    found_ids = {
+        event["id"]
+        for event in found_events
+    }
+
+    for old in old_events:
+        if (
+            old.get("keep") is True
+            and old.get("id") not in found_ids
+        ):
+            all_events.append(old)
+
+    # Видаляємо незакріплені події після 2 днів.
     cleaned_events = []
 
     for event in all_events:
-
         if event.get("keep") is True:
             cleaned_events.append(event)
             continue
@@ -222,9 +315,10 @@ def main():
 
     save_events(cleaned_events)
 
+    print()
     print(f"Знайдено подій: {len(found_events)}")
-    print(f"Нових подій: {len(new_events)}")
     print(f"Активних подій: {len(cleaned_events)}")
+    print(f"Файл: {EVENTS_FILE}")
 
 
 if __name__ == "__main__":
