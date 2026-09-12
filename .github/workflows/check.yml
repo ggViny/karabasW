@@ -32,8 +32,5 @@ jobs:
           git config user.name "karabasW bot"
           git config user.email "actions@github.com"
           git add events.json
-
-          if ! git diff --cached --quiet; then
-            git commit -m "Update KARABAS events"
-            git push origin HEAD:main
-          fi
+          git diff --cached --quiet || git commit -m "Update KARABAS events"
+          git push
