@@ -70,17 +70,5 @@
     "first_seen": "2026-09-29T16:30:36.725154+00:00",
     "keep": false,
     "expires_at": "2026-10-01T16:30:36.725154+00:00"
-  },
-  {
-    "id": "5-nizza-2",
-    "title": "5’nizza 2026-12-17 20:00 (Flex, InStock) in Wien - buy tickets at KARABAS",
-    "url": "https://wien.karabas.co/uk/5-nizza-2",
-    "image": "https://images.karabas.co/external/0196301b-14a4-76a1-928a-1ba311018131/events/01a0ec4b-56ec-719e-b3d0-f6833f552cb3/2906943250_ImageBig639262042155883406.jpeg",
-    "date": "23/10/2026",
-    "time": "20:00",
-    "venue": "Szene Wien",
-    "first_seen": "2026-09-29T13:38:17.031818+00:00",
-    "keep": false,
-    "expires_at": "2026-10-01T13:38:17.031818+00:00"
   }
 ]
